@@ -1,0 +1,10 @@
+name: imsdk_client_core
+version: 1.0.7
+description: 与imsdk-server-core服务端配套使用的Dart客户端。
+dependencies:
+  http: ^0.13.1
+  crypto: ^3.0.1
+  encrypt: ^5.0.0
+environment:
+  sdk: '>=2.0.0 <3.0.0'
+homepage: https://github.com/yangfanyu/imsdk-client-core

@@ -1,3 +1,7 @@
+## 1.0.8
+
+- Null safety support.
+
 ## 1.0.7
 
-- 完成核心功能.
+- Complete the core functions.

@@ -194,7 +194,7 @@ class WssBridge {
   static const LOG_LEVEL_INFO = 3;
   static const LOG_LEVEL_NONE = 4;
   String _host; //服务器地址
-  String _pwd; //数据加解密密码
+  String? _pwd; //数据加解密密码
   bool _binary; //是否用二进制传输
   int _timeout; //请求超时（毫秒）
   int _heartick; //心跳间隔（秒）
@@ -226,7 +226,7 @@ class WssBridge {
    * * @param heartick 心跳间隔（秒）
    * * @param conntick 重连间隔（秒）
    */
-  WssBridge(String host, String pwd, bool binary, {int timeout = 8000, int heartick = 60, int conntick = 3})
+  WssBridge(String host, String? pwd, bool binary, {int timeout = 8000, int heartick = 60, int conntick = 3})
       : _host = host.indexOf('https:') == 0 ? host.replaceFirst('https:', 'wss:') : (host.indexOf('http:') == 0 ? host.replaceFirst('http:', 'ws:') : host),
         _pwd = pwd,
         _binary = binary,
@@ -336,7 +336,7 @@ class WssBridge {
         if (_logLevel == WssBridge.LOG_LEVEL_ALL) print('net delay: ${_netDelay}ms');
         dynamic message = pack.message == null ? {} : pack.message;
         WssBridgeResponse resp = WssBridgeResponse(message['code'], message['data']);
-        if (resp.code == 200) {
+        if (resp.ok) {
           request.callSuccess(resp);
         } else {
           request.callError(resp);

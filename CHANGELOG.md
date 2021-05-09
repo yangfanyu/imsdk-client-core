@@ -1,3 +1,7 @@
+## 1.0.11
+
+- Optimize something.
+
 ## 1.0.10
 
 - Add ListenerDecoder.

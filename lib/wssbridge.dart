@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:encrypt/encrypt.dart';
 
+typedef WssBridgeListenerDecoder = dynamic Function(WssBridgePackData packData);
 typedef WssBridgeListenerCallback = void Function(dynamic message, List<dynamic>? params);
 typedef WssBridgeRequestCallback = void Function(WssBridgeResponse resp, List<dynamic>? params);
 typedef WssBridgeOnopen = void Function(List<dynamic>? params);
@@ -211,6 +212,8 @@ class WssBridge {
   bool _paused; //是否暂停重连
   bool _locked; //是否正在连接
   bool _expired; //是否已经销毁
+  //预解码器
+  WssBridgeListenerDecoder? _listenerDecoder;
   //状态监听
   WssBridgeOnopen? _onopen;
   WssBridgeOnclose? _onclose;
@@ -496,6 +499,14 @@ class WssBridge {
   }
 
   /**
+   * 设置监听器的前置解码器，该解码器将在addListener设置的监听器回调之前调用
+   * * @param listenerDecoder 自定义解码器
+   */
+  void setListenerDecoder(WssBridgeListenerDecoder? listenerDecoder) {
+    _listenerDecoder = listenerDecoder;
+  }
+
+  /**
    * 手动触发pack.route对应的全部监听器
    * 
    * * @param pack 路由包装实例
@@ -506,7 +517,11 @@ class WssBridge {
     List<WssBridgeListener> oncelist = []; //删除只触发一次的监听
     for (int i = 0; i < listeners.length; i++) {
       WssBridgeListener item = listeners[i];
-      item.callMessage(pack.message);
+      if (_listenerDecoder == null) {
+        item.callMessage(pack.message);
+      } else {
+        item.callMessage(_listenerDecoder!(pack));
+      }
       if (item.once) {
         oncelist.add(item);
       }

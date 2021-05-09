@@ -1,3 +1,7 @@
+## 1.0.10
+
+- Add ListenerDecoder.
+
 ## 1.0.9
 
 - Modify something.

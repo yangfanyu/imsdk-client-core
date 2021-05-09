@@ -515,13 +515,10 @@ class WssBridge {
     List<WssBridgeListener>? listeners = _listeners[pack.route];
     if (listeners == null) return;
     List<WssBridgeListener> oncelist = []; //删除只触发一次的监听
+    dynamic message = _listenerDecoder == null ? pack.message : _listenerDecoder!(pack);
     for (int i = 0; i < listeners.length; i++) {
       WssBridgeListener item = listeners[i];
-      if (_listenerDecoder == null) {
-        item.callMessage(pack.message);
-      } else {
-        item.callMessage(_listenerDecoder!(pack));
-      }
+      item.callMessage(message);
       if (item.once) {
         oncelist.add(item);
       }

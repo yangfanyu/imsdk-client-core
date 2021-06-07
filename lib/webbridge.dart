@@ -3,6 +3,6 @@
  */
 class WebBridge {
   WebBridge() {
-    print('please use https://pub.dev/packages/http instead.');
+    print('[WebBridge] please use https://pub.dev/packages/http instead.');
   }
 }

@@ -1,12 +1,13 @@
 /**
  * WssServer的客户端
  */
-import 'dart:io';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:encrypt/encrypt.dart';
+import 'src/websocket_impl.dart';
+import 'src/websocket_api.dart' if (dart.library.io) 'src/websocket_io.dart' if (dart.library.html) 'src/websocket_html.dart' as platform;
 
 typedef WssBridgeListenerDecoder = dynamic Function(WssBridgePackData packData);
 typedef WssBridgeListenerCallback = void Function(dynamic message, List<dynamic>? params);
@@ -39,7 +40,7 @@ class WssBridgePackData {
 
   String route;
   int? reqId;
-  dynamic? message;
+  dynamic message;
   /**
    * * @param route 路由
    * * @param reqId 请求序号
@@ -70,7 +71,7 @@ class WssBridgePackData {
    * * @param binary 是否返回二进制结果，设置了pwd时生效
    * * @returns String|Uint8List
    */
-  static dynamic? serialize(WssBridgePackData pack, String? pwd, bool binary) {
+  static dynamic serialize(WssBridgePackData pack, String? pwd, bool binary) {
     try {
       String str = json.encode(pack);
       if (pwd != null) {
@@ -208,9 +209,8 @@ class WssBridge {
   Map<String, List<WssBridgeListener>> _listeners; //监听集合
   Map<int, WssBridgeRequest> _requests; //请求集合
   int _logLevel; //调试信息输出级别
-  WebSocket? _socket; //套接字
+  WebsocketImpl? _socket; //套接字
   bool _paused; //是否暂停重连
-  bool _locked; //是否正在连接
   bool _expired; //是否已经销毁
   //预解码器
   WssBridgeListenerDecoder? _listenerDecoder;
@@ -246,7 +246,6 @@ class WssBridge {
         _logLevel = WssBridge.LOG_LEVEL_NONE,
         _socket = null,
         _paused = false,
-        _locked = false,
         _expired = false;
 
   void _onSocketOpen() {
@@ -255,18 +254,18 @@ class WssBridge {
     if (_onopen != null) _onopen!(_params);
   }
 
-  void _onSocketMessage(data) {
+  void _onSocketMessage(dynamic data) {
     if (_expired) return;
     _readPackData(data);
   }
 
-  void _onSocketClose() {
+  void _onSocketClose(int? code, String? reason) {
     if (_expired) return;
     _safeClose(WssBridgePackData.CODE_CLOSE['code'] as int, WssBridgePackData.CODE_CLOSE['data'] as String);
-    if (_onclose != null) _onclose!(0, 'Unknow Reason', _params);
+    if (_onclose != null) _onclose!(code ?? 0, reason ?? 'Unknow Reason', _params);
   }
 
-  void _onSocketError(e) {
+  void _onSocketError(dynamic e) {
     if (_expired) return;
     _safeClose(WssBridgePackData.CODE_ERROR['code'] as int, WssBridgePackData.CODE_ERROR['data'] as String);
     if (_onerror != null) _onerror!(e != null ? e.toString() : 'Unknow Error', _params);
@@ -293,7 +292,7 @@ class WssBridge {
         _sendPackData(WssBridgePackData(WssBridgePackData.ROUTE_HEARTICK, _reqIdInc++, DateTime.now().millisecondsSinceEpoch)); //发送心跳包
       }
     } else {
-      if (_timerInc % _conntick == 0 && !_paused && !_locked) {
+      if (_timerInc % _conntick == 0 && !_paused) {
         _retryCnt++; //增加重连次数
         if (_onretry != null) _onretry!(_retryCnt, _params);
         _safeOpen(); //安全开启连接
@@ -372,27 +371,13 @@ class WssBridge {
   void _safeOpen() {
     _safeClose(WssBridgePackData.CODE_RETRY['code'] as int, WssBridgePackData.CODE_RETRY['data'] as String); //关闭旧连接
     if (_expired) return;
-    /**
-     * dart版本的_socket是连接建立后异步赋值的，所以必须要加锁来保证同时只有一个连接在尝试建立
-     * 否则WebSocket.connect调用了多少次就会then或catchError多少次，且同时尝试多个连接很混乱
-     */
-    if (_locked) return;
-    _locked = true; //加锁
-    WebSocket.connect(_host).timeout(Duration(milliseconds: _timeout)).then((socket) {
-      _socket = socket;
-      _locked = false; //解锁
-      //手动回调，添加监听，与JS保持一致
-      _onSocketOpen();
-      _socket!.listen(_onSocketMessage, onError: _onSocketError, onDone: _onSocketClose);
-    }).catchError((e) {
-      _locked = false; //解锁
-      _onSocketError(e);
-    });
+    _socket = platform.createWebSocket();
+    _socket!.connect(_host, onOpen: _onSocketOpen, onMessage: _onSocketMessage, onClose: _onSocketClose, onError: _onSocketError);
   }
 
   void _safeClose(int code, String reason) {
     if (_socket != null) {
-      _socket!.close(code, reason).catchError((e) {});
+      _socket!.close(code, reason);
       _socket = null;
     }
   }
@@ -541,5 +526,5 @@ class WssBridge {
 
   int getNetDelay() => _netDelay;
 
-  bool isConnected() => _socket != null && _socket!.readyState == WebSocket.open;
+  bool isConnected() => _socket != null && _socket!.isConnected();
 }

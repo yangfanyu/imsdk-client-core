@@ -1,3 +1,7 @@
+## 1.0.16
+
+- Support web.
+
 ## 1.0.11
 
 - Optimize something.

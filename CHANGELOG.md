@@ -1,3 +1,7 @@
+## 1.0.18
+
+- Fixed endian error for web.
+
 ## 1.0.16
 
 - Support web.

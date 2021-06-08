@@ -79,8 +79,8 @@ class WssBridgePackData {
         Hmac hmacSha256 = Hmac(sha256, utf8.encode(pwd)); // HMAC-SHA256
         Uint8List salt = Key.fromSecureRandom(16).bytes;
         Uint8List iv = Key.fromSecureRandom(16).bytes;
-        List<int> key = hmacSha256.convert(salt).bytes;
-        Encrypter aesCrypto = Encrypter(AES(Key(key as Uint8List), mode: AESMode.cbc, padding: 'PKCS7'));
+        Uint8List key = Uint8List.fromList(hmacSha256.convert(salt).bytes);
+        Encrypter aesCrypto = Encrypter(AES(Key(key), mode: AESMode.cbc, padding: 'PKCS7'));
         Uint8List body = aesCrypto.encrypt(str, iv: IV(iv)).bytes;
         Uint8List encRes = Uint8List(salt.length + iv.length + body.length);
         _copyUint8List(binary, encRes, salt, 0);
@@ -110,15 +110,21 @@ class WssBridgePackData {
         Uint8List words;
         if (data is String) {
           words = base64Decode(data);
-        } else {
-          words = Uint8List(data.length);
+        } else if (data is ByteBuffer) {
+          Uint8List copy = data.asUint8List(); //Web is NativeByteBuffer
+          words = Uint8List(copy.length);
+          _copyUint8List(true, words, copy, 0);
+        } else if (data is Uint8List) {
+          words = Uint8List(data.length); //Native is Uint8List
           _copyUint8List(true, words, data, 0);
+        } else {
+          return null;
         }
         Uint8List salt = words.sublist(0, 16);
         Uint8List iv = words.sublist(16, 32);
-        List<int> key = hmacSha256.convert(salt).bytes;
+        Uint8List key = Uint8List.fromList(hmacSha256.convert(salt).bytes);
         Uint8List body = words.sublist(32);
-        Encrypter aesCrypto = Encrypter(AES(Key(key as Uint8List), mode: AESMode.cbc, padding: 'PKCS7'));
+        Encrypter aesCrypto = Encrypter(AES(Key(key), mode: AESMode.cbc, padding: 'PKCS7'));
         String decRes = aesCrypto.decrypt(Encrypted(body), iv: IV(iv));
         Map<String, dynamic> obj = json.decode(decRes);
         return WssBridgePackData(obj['route'], obj['reqId'], obj['message']);

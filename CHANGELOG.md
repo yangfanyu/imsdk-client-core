@@ -1,3 +1,7 @@
+## 1.0.23
+
+- Add isolate api.
+
 ## 1.0.18
 
 - Fixed endian error for web.

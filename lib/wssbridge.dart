@@ -7,9 +7,12 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:encrypt/encrypt.dart';
 import 'src/websocket_impl.dart';
-import 'src/websocket_api.dart' if (dart.library.io) 'src/websocket_io.dart' if (dart.library.html) 'src/websocket_html.dart' as platform;
+import 'src/websocket_api.dart' if (dart.library.io) 'src/websocket_io.dart' if (dart.library.html) 'src/websocket_html.dart' as websocket;
+import 'src/processor_impl.dart';
+import 'src/processor_api.dart' if (dart.library.io) 'src/processor_io.dart' if (dart.library.html) 'src/processor_html.dart' as processor;
+export 'src/processor_impl.dart' show ProcessorMessage;
 
-typedef WssBridgeListenerDecoder = dynamic Function(WssBridgePackData packData);
+typedef WssBridgeListenerDecoder = Future<dynamic> Function(WssBridgePackData packData);
 typedef WssBridgeListenerCallback = void Function(dynamic message, List<dynamic>? params);
 typedef WssBridgeRequestCallback = void Function(WssBridgeResponse resp, List<dynamic>? params);
 typedef WssBridgeOnopen = void Function(List<dynamic>? params);
@@ -19,6 +22,11 @@ typedef WssBridgeOnretry = void Function(int count, List<dynamic>? params);
 typedef WssBridgeOnsecond = void Function(int second, int delay, List<dynamic>? params);
 
 class WssBridgePackData {
+  /**
+   * 并发
+   */
+  static const ISOLATE_SERIALIZE = '\$serialize\$'; //隔离序列化路由
+  static const ISOLATE_DESERIALIZE = '\$deserialize\$'; //隔离反序列化路由
   /**
    * 路由
    */
@@ -140,6 +148,7 @@ class WssBridgePackData {
 
   /**
    * 计算md5编码
+   * 
    * * @param data 要计算编码的字符串
    */
   static String getMd5(String data) {
@@ -210,12 +219,13 @@ class WssBridge {
   Timer? _timer; //秒钟计时器
   int _timerInc; //秒数自增量
   int _reqIdInc; //请求自增量
-  int _netDelay; //网络延迟
+  int _netDelay; //网络延迟（毫秒）
   int _retryCnt; //断线重连尝试次数
   Map<String, List<WssBridgeListener>> _listeners; //监听集合
   Map<int, WssBridgeRequest> _requests; //请求集合
   int _logLevel; //调试信息输出级别
   WebsocketImpl? _socket; //套接字
+  ProcessorImpl? _isolate; //并发计算隔离进程
   bool _paused; //是否暂停重连
   bool _expired; //是否已经销毁
   //预解码器
@@ -251,6 +261,7 @@ class WssBridge {
         _requests = {},
         _logLevel = WssBridge.LOG_LEVEL_NONE,
         _socket = null,
+        _isolate = null,
         _paused = false,
         _expired = false;
 
@@ -310,10 +321,10 @@ class WssBridge {
     }
   }
 
-  void _sendPackData(WssBridgePackData pack) {
+  void _sendPackData(WssBridgePackData pack) async {
     if (_expired) return;
     if (isConnected()) {
-      dynamic data = WssBridgePackData.serialize(pack, _pwd, _binary);
+      dynamic data = isolateEnable() ? await _isolate!.runTask(WssBridgePackData.ISOLATE_SERIALIZE, [pack, _pwd, _binary]) : WssBridgePackData.serialize(pack, _pwd, _binary);
       if (data == null) {
         if (_onerror != null) _onerror!('Serialize Error', _params);
         return;
@@ -323,8 +334,8 @@ class WssBridge {
     }
   }
 
-  void _readPackData(dynamic data) {
-    WssBridgePackData? pack = WssBridgePackData.deserialize(data, _pwd);
+  void _readPackData(dynamic data) async {
+    WssBridgePackData? pack = isolateEnable() ? await _isolate!.runTask(WssBridgePackData.ISOLATE_DESERIALIZE, [data, _pwd]) : WssBridgePackData.deserialize(data, _pwd);
     if (pack == null) {
       if (_onerror != null) _onerror!('Deserialize Error', _params);
       return;
@@ -377,7 +388,7 @@ class WssBridge {
   void _safeOpen() {
     _safeClose(WssBridgePackData.CODE_RETRY['code'] as int, WssBridgePackData.CODE_RETRY['data'] as String); //关闭旧连接
     if (_expired) return;
-    _socket = platform.createWebSocket();
+    _socket = websocket.createWebSocket();
     _socket!.connect(_host, onOpen: _onSocketOpen, onMessage: _onSocketMessage, onClose: _onSocketClose, onError: _onSocketError);
   }
 
@@ -423,6 +434,10 @@ class WssBridge {
     if (_timer != null) {
       _timer!.cancel();
       _timer = null;
+    }
+    if (_isolate != null) {
+      _isolate!.destroy();
+      _isolate = null;
     }
     _safeClose(WssBridgePackData.CODE_CALL['code'] as int, WssBridgePackData.CODE_CALL['data'] as String); //安全关闭连接
   }
@@ -491,6 +506,7 @@ class WssBridge {
 
   /**
    * 设置监听器的前置解码器，该解码器将在addListener设置的监听器回调之前调用
+   * 
    * * @param listenerDecoder 自定义解码器
    */
   void setListenerDecoder(WssBridgeListenerDecoder? listenerDecoder) {
@@ -502,11 +518,11 @@ class WssBridge {
    * 
    * * @param pack 路由包装实例
    */
-  void triggerEvent(WssBridgePackData pack) {
+  void triggerEvent(WssBridgePackData pack) async {
     List<WssBridgeListener>? listeners = _listeners[pack.route];
     if (listeners == null) return;
     List<WssBridgeListener> oncelist = []; //删除只触发一次的监听
-    dynamic message = _listenerDecoder == null ? pack.message : _listenerDecoder!(pack);
+    dynamic message = _listenerDecoder == null ? pack.message : await _listenerDecoder!(pack);
     for (int i = 0; i < listeners.length; i++) {
       WssBridgeListener item = listeners[i];
       item.callMessage(message);
@@ -527,10 +543,64 @@ class WssBridge {
    * 恢复断线自动重连的功能
    */
   void resumeReconnect() => _paused = false;
-
+  /**
+   * 设置调试日志输出级别
+   * 
+   * * @param level 日志级别，有效值为 WssBridge.LOG_LEVEL_XXX
+   */
   void setLogLevel(int level) => _logLevel = level;
-
+  /**
+   * 获取当前网络延迟毫秒
+   */
   int getNetDelay() => _netDelay;
-
+  /**
+   * 是否已经建立网络连接
+   */
   bool isConnected() => _socket != null && _socket!.isConnected();
+  /**
+   * 是否为原生的dart环境
+   */
+  bool isNative() => _socket != null && _socket!.isNative();
+
+  /**
+   * 初始化并发计算隔离进程
+   * 
+   * * @param customHandle 自定义并发计算函数，必须为静态函数 或 顶级函数
+   * * @param debug 是否打印任务处理日志
+   * * @param timeout 计算超时时间（毫秒）
+   */
+  Future<bool> initIsolate(ProcessorHandle customHandle, {bool debug = false, int timeout = 3000}) {
+    _isolate = processor.createProcessor();
+    return _isolate!.start(ProcessorHandler(debug: debug, timeout: timeout, bridgeHandle: _isolateHandle, customHandle: customHandle));
+  }
+
+  /**
+   * 运行一个并发计算隔离任务
+   * 
+   * * @param taskType 计算任务类型名
+   * * @param taskData 计算任务所需数据
+   */
+  Future<T?> runIsolateTask<T>(String taskType, dynamic taskData) {
+    if (isolateEnable()) {
+      return _isolate!.runTask(taskType, taskData);
+    } else {
+      return Future.value(null);
+    }
+  }
+
+  /**
+   * 是否启用了并发计算隔离进程
+   */
+  bool isolateEnable() => _isolate != null;
+
+  static dynamic _isolateHandle(ProcessorMessage message) {
+    switch (message.type) {
+      case WssBridgePackData.ISOLATE_SERIALIZE:
+        return WssBridgePackData.serialize(message.data[0], message.data[1], message.data[2]);
+      case WssBridgePackData.ISOLATE_DESERIALIZE:
+        return WssBridgePackData.deserialize(message.data[0], message.data[1]);
+      default:
+        return null;
+    }
+  }
 }
